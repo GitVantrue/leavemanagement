@@ -2,7 +2,7 @@ import streamlit as st
 import sqlite3
 import random
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 
 # 페이지 설정을 스크립트 최상단에 위치
@@ -20,6 +20,13 @@ STATUS_DICT = {
     'PENDING': '수락 대기중',
     'APPROVED': '승인됨',
     'REJECTED': '반려됨'
+}
+
+# 연차 유형 딕셔너리
+LEAVE_TYPE_DICT = {
+    'FULL_DAY': '전일',
+    'MORNING_HALF': '오전 반차',
+    'AFTERNOON_HALF': '오후 반차'
 }
 
 # 비밀번호 해시 함수
@@ -41,33 +48,69 @@ def verify_password(stored_password, provided_password):
     except:
         return False
 
+# 날짜 범위 내 날짜 계산 함수
+def calculate_working_days(start_date, end_date, leave_type):
+    start = datetime.strptime(str(start_date), "%Y-%m-%d")
+    end = datetime.strptime(str(end_date), "%Y-%m-%d")
+    
+    # 반차인 경우 하루 이상 선택 불가
+    if (leave_type == 'MORNING_HALF' or leave_type == 'AFTERNOON_HALF'):
+        if start_date != end_date:
+            return {"error": "반차는 하루만 선택 가능합니다"}
+        return {"days": 0.5}
+    
+    # 주말을 제외한 날짜 계산
+    days = 0
+    current = start
+    while current <= end:
+        # 주말 제외 (토요일(5)과 일요일(6) 제외)
+        if current.weekday() < 5:
+            days += 1
+        current += timedelta(days=1)
+    
+    return {"days": days}
+    
 # 데이터베이스 초기화 함수
 def init_database():
     try:
         conn = sqlite3.connect("leave_management.db")
         cursor = conn.cursor()
 
-        # 직원 테이블 생성
+        # 직원 테이블 생성 (기존 데이터 유지)
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS employees (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
             total_leave INTEGER DEFAULT 14,
-            used_leave INTEGER DEFAULT 0
+            used_leave REAL DEFAULT 0
         )
         """)
 
-        # 휴가 신청 테이블 생성
+        # 휴가 신청 테이블 생성 (기존 데이터 유지)
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS leave_requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL,
-            request_date DATE NOT NULL,
-            days INTEGER NOT NULL,
+            start_date DATE NOT NULL,
+            end_date DATE NOT NULL,
+            days REAL NOT NULL,
+            leave_type TEXT NOT NULL,
             status TEXT DEFAULT 'PENDING'
         )
         """)
+
+        # 테이블 존재 여부 및 컬럼 확인
+        cursor.execute("PRAGMA table_info(leave_requests)")
+        columns = [column[1] for column in cursor.fetchall()]
+
+        # 필요한 컬럼이 없는 경우에만 추가
+        if 'start_date' not in columns:
+            cursor.execute("ALTER TABLE leave_requests ADD COLUMN start_date DATE")
+        if 'end_date' not in columns:
+            cursor.execute("ALTER TABLE leave_requests ADD COLUMN end_date DATE")
+        if 'leave_type' not in columns:
+            cursor.execute("ALTER TABLE leave_requests ADD COLUMN leave_type TEXT")
 
         conn.commit()
         conn.close()
@@ -196,43 +239,75 @@ def main_page():
     # 휴가 신청 섹션
     st.header("✍️ 휴가 신청")
 
+    # 날짜 범위 선택
+    col1, col2 = st.columns(2)
+    with col1:
+        start_date = st.date_input("📅 시작 날짜", 
+                                 value=datetime.now(),
+                                 key='start_date')
+    with col2:
+        end_date = st.date_input("📅 종료 날짜", 
+                                value=datetime.now(),
+                                key='end_date')
+
+    # 연차 유형 선택
+    leave_type = st.selectbox("🕒 연차 유형", 
+        options=['FULL_DAY', 'MORNING_HALF', 'AFTERNOON_HALF'],
+        format_func=lambda x: LEAVE_TYPE_DICT[x],
+        key='leave_type'
+    )
+
+    # 예상 사용 연차 계산
+    result = calculate_working_days(start_date, end_date, leave_type)
+    
+    if "error" in result:
+        st.error(result["error"])
+        can_submit = False
+        expected_days = 0
+    else:
+        st.write(f"예상 사용 연차: {result['days']}일")
+        can_submit = True
+        expected_days = result['days']
+
     with st.form("leave_request_form"):
-        leave_date = st.date_input("📅 휴가 날짜 선택")
-        remaining_leave = st.session_state['total_leave'] - st.session_state['used_leave']
-        leave_days = st.number_input("🕒 신청할 연차 일수",
-                                     min_value=1,
-                                     max_value=remaining_leave,
-                                     step=1)
+        submit_leave = st.form_submit_button("휴가 신청하기", disabled=not can_submit)
 
-        submit_leave = st.form_submit_button("휴가 신청하기")
+        if submit_leave and can_submit:
+            # 연차 가능 여부 확인
+            remaining_leave = st.session_state['total_leave'] - st.session_state['used_leave']
+            if expected_days > remaining_leave:
+                st.error("남은 연차가 부족합니다.")
+                return
 
-        if submit_leave:
             conn = sqlite3.connect("leave_management.db")
             cursor = conn.cursor()
 
             try:
                 # 휴가 요청 테이블에 저장
                 cursor.execute("""
-                    INSERT INTO leave_requests (username, request_date, days)
-                    VALUES (?, ?, ?)
-                """, (st.session_state['username'], leave_date, leave_days))
+                    INSERT INTO leave_requests 
+                    (username, start_date, end_date, days, leave_type, status)
+                    VALUES (?, ?, ?, ?, ?, 'PENDING')
+                """, (st.session_state['username'], start_date, end_date, 
+                     expected_days, leave_type))
 
                 # 직원 테이블의 사용 연차 업데이트
                 cursor.execute("""
                     UPDATE employees
                     SET used_leave = used_leave + ?
                     WHERE username = ?
-                """, (leave_days, st.session_state['username']))
+                """, (expected_days, st.session_state['username']))
 
                 conn.commit()
                 st.success("✅ 휴가 신청이 완료되었습니다!")
 
                 # 세션 상태 업데이트
-                st.session_state['used_leave'] += leave_days
+                st.session_state['used_leave'] += expected_days
                 st.experimental_rerun()
 
             except Exception as e:
                 st.error(f"휴가 신청 중 오류 발생: {e}")
+                conn.rollback()
 
             finally:
                 conn.close()
@@ -242,24 +317,59 @@ def main_page():
     conn = sqlite3.connect("leave_management.db")
     cursor = conn.cursor()
 
-    cursor.execute("SELECT request_date, days, status FROM leave_requests WHERE username = ?", (st.session_state['username'],))
-    leave_history = cursor.fetchall()
-    conn.close()
+    try:
+        # 현재 사용자의 휴가 신청 내역 조회 (최신 순으로 정렬)
+        cursor.execute("""
+            SELECT id, start_date, end_date, days, leave_type, status
+            FROM leave_requests 
+            WHERE username = ?
+            ORDER BY id DESC
+        """, (st.session_state['username'],))
+        
+        leave_history = cursor.fetchall()
+        
+        if leave_history:
+            # 데이터프레임 생성
+            history_df = pd.DataFrame(leave_history, 
+                columns=['id', '시작날짜', '종료날짜', '일수', '유형', '상태'])
+            
+            # 상태와 유형 변환
+            history_df['상태'] = history_df['상태'].map(STATUS_DICT)
+            history_df['유형'] = history_df['유형'].map(LEAVE_TYPE_DICT)
 
-    if leave_history:
-        # 데이터프레임 생성 및 상태 변환
-        history_df = pd.DataFrame(leave_history, columns=['날짜', '일수', '상태'])
-        history_df['상태'] = history_df['상태'].map(STATUS_DICT)
+            # 현재 남은 연차부터 시작하여 각 신청 시점의 남은 연차 계산
+            current_remaining = st.session_state['total_leave'] - st.session_state['used_leave']
+            total_leave = st.session_state['total_leave']
+            
+            # 역순으로 남은 연차 계산
+            remaining_leaves = []
+            running_total = current_remaining
+            
+            for days in history_df['일수']:
+                remaining_leaves.append(running_total)
+                running_total += days  # 과거로 갈수록 사용량을 다시 더함
+            
+            history_df['남은 연차'] = remaining_leaves
 
-        # 남은 연차 계산 추가
-        total_leave = st.session_state['total_leave']
-        used_leave = st.session_state['used_leave']
-        history_df['신청 후 남은 연차'] = total_leave - used_leave
+            # ID 컬럼 제거하고 시간순으로 정렬
+            history_df = history_df.drop('id', axis=1)
+            history_df = history_df.iloc[::-1]  # 시간순 정렬
 
-        st.dataframe(history_df, use_container_width=True)
-    else:
-        st.write("아직 신청한 휴가가 없습니다.")
+            # 데이터프레임 표시
+            st.dataframe(history_df, use_container_width=True)
+            
+            # 현재 남은 연차 표시
+            st.info(f"현재 남은 연차: {current_remaining}일")
+        else:
+            st.write("아직 신청한 휴가가 없습니다.")
 
+    except Exception as e:
+        st.error(f"휴가 신청 내역 조회 중 오류 발생: {e}")
+        st.write(e)
+    finally:
+        conn.close()
+        
+        
 # 메인 앱 로직
 def main():
     # 데이터베이스 초기화
