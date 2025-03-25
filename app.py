@@ -26,10 +26,10 @@ STATUS_DICT = {
 def hash_password(password, salt=None):
     if salt is None:
         salt = str(random.randint(1000, 9999))
-    
+
     salted_password = f"{salt}{password}"
     hashed = hashlib.sha256(salted_password.encode()).hexdigest()
-    
+
     return f"{salt}${hashed}"
 
 # 비밀번호 검증 함수
@@ -79,7 +79,7 @@ def signup_page():
     st.title("🌟 연차 관리 시스템 회원가입")
 
     with st.form(key="signup_form", clear_on_submit=True):
-        new_username = st.text_input("👤 이름 (포켓몬 3글자)", key="signup_username")
+        new_username = st.text_input("👤 이름", key="signup_username")
         new_password = st.text_input("🔐 비밀번호", type="password", key="signup_password")
         confirm_password = st.text_input("🔐 비밀번호 확인", type="password", key="signup_confirm_password")
 
@@ -131,7 +131,7 @@ def login_page():
     st.title("🔑 연차 관리 시스템 로그인")
 
     with st.form(key="login_form"):
-        username = st.text_input("👤 ID (포켓몬 3글자)")
+        username = st.text_input("👤 ID ")
         password = st.text_input("🔐 비밀번호", type="password")
 
         login_button = st.form_submit_button("로그인")
@@ -250,7 +250,7 @@ def main_page():
         # 데이터프레임 생성 및 상태 변환
         history_df = pd.DataFrame(leave_history, columns=['날짜', '일수', '상태'])
         history_df['상태'] = history_df['상태'].map(STATUS_DICT)
-        
+
         # 남은 연차 계산 추가
         total_leave = st.session_state['total_leave']
         used_leave = st.session_state['used_leave']
@@ -290,3 +290,4 @@ def main():
 # 앱 실행
 if __name__ == "__main__":
     main()
+
