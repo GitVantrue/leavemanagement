@@ -157,7 +157,7 @@ def signup_page():
                     conn.commit()
                     st.success(f"{new_username}님, 회원가입이 완료되었습니다!")
                     st.session_state['current_page'] = 'login'
-                    st.experimental_rerun()
+                    st.rerun()
 
                 except sqlite3.IntegrityError:
                     st.error("이미 존재하는 이름입니다. 다른 이름을 사용해주세요.")
@@ -182,7 +182,7 @@ def login_page():
 
         if signup_link:
             st.session_state['current_page'] = 'signup'
-            st.experimental_rerun()
+            st.rerun()
 
         if login_button:
             try:
@@ -202,7 +202,7 @@ def login_page():
                         st.session_state['username'] = username
                         st.session_state['total_leave'] = total_leave
                         st.session_state['used_leave'] = used_leave
-                        st.experimental_rerun()
+                        st.rerun()
                     else:
                         st.error("로그인 실패! 비밀번호가 일치하지 않습니다.")
                 else:
@@ -303,7 +303,7 @@ def main_page():
 
                 # 세션 상태 업데이트
                 st.session_state['used_leave'] += expected_days
-                st.experimental_rerun()
+                st.rerun()
 
             except Exception as e:
                 st.error(f"휴가 신청 중 오류 발생: {e}")
@@ -369,7 +369,6 @@ def main_page():
     finally:
         conn.close()
         
-        
 # 메인 앱 로직
 def main():
     # 데이터베이스 초기화
@@ -395,9 +394,8 @@ def main():
         if st.sidebar.button("🚪 로그아웃"):
             st.session_state['logged_in'] = False
             st.session_state['current_page'] = 'login'
-            st.experimental_rerun()
+            st.rerun()
 
 # 앱 실행
 if __name__ == "__main__":
     main()
-
